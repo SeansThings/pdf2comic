@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# pdf2cbz.sh 'PDF Directory (optional)'
+# pdf2cbz.sh 'PDF Directory (optional)' 'Output File Format (optional)'
 
 ## Requirements
 #  poppler-utils - sudo apt-get install poppler-utils
