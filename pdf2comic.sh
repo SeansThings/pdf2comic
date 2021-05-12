@@ -11,7 +11,7 @@
 
 arcFmt="cbz"
 pwd=`pwd`
-workingDir="/home/jarvis/.pdf2cbz"
+workingDir="/home/jarvis/.pdf2comic"
 pdfDir="$workingDir/pdf"
 pngDir="$workingDir/png"
 trimDir="$workingDir/trim"

@@ -1,0 +1,3 @@
+pdf2image
+Wand
+alive-progress
