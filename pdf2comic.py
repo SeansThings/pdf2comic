@@ -1,9 +1,11 @@
 #!/usr/bin/python
 
 import os
+from posixpath import splitext
 import sys
 import getopt
 import io
+import zipfile
 import pdf2image
 import PIL
 # import pathlib
@@ -12,6 +14,7 @@ from zipfile import ZipFile
 from alive_progress import alive_bar
 import time
 import subprocess
+# import rarfile
 
 def trimBorder(im):
     # Trim the borders on pages based on top left pixel colour
@@ -22,13 +25,13 @@ def trimBorder(im):
     if bbox:
         return im.crop(bbox)
 
-def convertComic(comicFormat, inDir, outDir, pdf):
+def convertPDF(comicFormat, inputFoD, outDir, pdfFile, trim):
     # Replaces spaces with underscores in filenames        
-    baseFN=os.path.splitext(pdf)[0]
+    baseFN=os.path.splitext(pdfFile)[0]
     pageFN=baseFN.replace(' ', '_')
 
     # Convert and store pages
-    pdfLocation = inDir / pdf
+    pdfLocation = inputFoD / pdfFile
     pages = pdf2image.convert_from_path(pdfLocation)
 
     # Create zip file in ram
@@ -40,8 +43,10 @@ def convertComic(comicFormat, inDir, outDir, pdf):
 
             # Process each page
             for i in range(len(pages)):
-                # Trim pages
-                pages[i] = trimBorder(pages[i])
+                
+                # Check if pages are to be trimmed
+                if trim == True:
+                    pages[i] = trimBorder(pages[i])
 
                 # Replace PIL images with BytesIO image
                 pageIO = io.BytesIO()
@@ -50,14 +55,13 @@ def convertComic(comicFormat, inDir, outDir, pdf):
                 pages[i] = pageIO
                 
                 # Add pages to archive file
-                if comicFormat == 'cbr':
+                if comicFormat == 'cbz':
+                    pageName=pageFN + '_-_' + str(i).zfill(3) + '.webp'
+                    comicZip.writestr(pageName, pages[i].getvalue())
+                elif comicFormat == 'cbr':
                     print('CBR\'s not yet supported!')
                     # os.system('rar')
                     # subprocess.call(['echo', 'Hello World!'])
-                elif comicFormat == 'cbz':
-                    # comicZip.writestr(pageFN + '_-_' + str(i).zfill(3) + '.webp', pages[i].getvalue())
-                    pageName=pageFN + '_-_' + str(i).zfill(3) + '.webp'
-                    comicZip.writestr(pageName, pages[i].getvalue())
 
                 # Update progress bar
                 time.sleep(0.001)
@@ -72,21 +76,77 @@ def convertComic(comicFormat, inDir, outDir, pdf):
         outFN.write(zipIO.getvalue())
         outFN.close()
 
+def convertComic(inputFoD, outDir, comicArchive):
+
+    # Replaces spaces with underscores in filenames
+    baseFN=os.path.splitext(comicArchive)[0]
+    pageFN=baseFN.replace(' ', '_')
+
+    archiveFile = zipfile.ZipFile(inputFoD / comicArchive, 'r')
+
+    # Create zip file in ram
+    zipIO = io.BytesIO()
+    with ZipFile(zipIO, 'w') as comicZip:
+        
+        # Create progress bar
+        with alive_bar(len(archiveFile.namelist()), title=baseFN, title_length='40', length='40', bar='blocks', spinner='dots_reverse') as bar:
+
+            i = 1
+
+            orderedNameList = archiveFile.namelist()
+            orderedNameList.sort()
+
+            for page in orderedNameList:
+                # Convert each page to WEPB format
+                if os.path.splitext(page)[1].lower() in ('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.wepb'):
+                    pageIO = io.BytesIO()
+                    pageBy = PIL.Image.open(io.BytesIO(archiveFile.read(page)))
+                    pageBy.save(pageIO, 'WEBP')
+                    pageBy.close()
+                    pageBy = pageIO                
+                    pageName = pageFN + '_-_' + str(i).zfill(3) + '.webp'
+                    comicZip.writestr(pageName, pageBy.getvalue())
+                # Copy metadata to new archive
+                elif page == 'ComicInfo.xml':
+                    pageIO = io.BytesIO()
+                    pageBy = io.BytesIO(archiveFile.read(page))                
+                    pageName = 'ComicInfo.xml'
+                    comicZip.writestr(pageName, pageBy.getvalue())
+
+                i = i + 1
+
+                # Update progress bar
+                time.sleep(0.001)
+                bar()
+    
+    # Close archive files
+    archiveFile.close()
+    comicZip.close()
+
+    # Write archive to disk
+    comicZipName = str(outDir / baseFN) + '.' + 'cbz'
+    with open(comicZipName, 'wb') as outFN:
+        outFN.write(zipIO.getvalue())
+        outFN.close()
+
 def main(argv):
     # Check the command line arguments
-    inputStr = '''
+    helpStr = '''
     pdf2comic.py
     ============
 
     Arguments              Options           Requisite   Notes    
-    -h    --help                             Optional    Displays this help message
-    -c    --comicFormat    cbr, r, cbz, z    Optional    Wanted comic format. Defaults to cbz
-    -i    --inDir                            Required    Input directory containing pdf's or single PDF file
-    -o    --outDir                           Optional    Output directory for comics
+    -h    --help                             Optional    Displays this help message.
+    -t    --trim                             Optional    Trim borders on every page. Defaults to False.
+    -c    --comicFormat    cbz, z            Optional    Wanted comic format. Defaults to cbz.
+    -i    --inputFoD                         Required    Input directory containing pdf/cbz/cbr files.
+                                                         A single pdf/cbz/cbr input file.
+    -o    --outDir                           Optional    Output directory for comics.
 
 
     Examples:
 
+    Converting PDF's to comic formats:
     Single: pdf2comic.py -c <Comic format> -i <Input file> -o <Output directory>
             
             pdf2comic.py -c cbz -i /home/user/comic.pdf
@@ -102,12 +162,13 @@ def main(argv):
             pdf2comic.py -c cbz -i C:\\comics -o C:\\comics_converted
     '''
     try:
-        opts, args = getopt.getopt(argv,'hf:i:o:',['help','comicFormat=','inDir=','outDir='])
+        opts, args = getopt.getopt(argv,'htci:o',['help','trim=','comicFormat=','inputFoD=','outDir='])
     except getopt.GetoptError:
-        print(inputStr)
+        print(helpStr)
         sys.exit(2)
-    
-    inDir = ''
+
+    trim = False
+    inputFoD = ''
     outDir = ''
     comicFormat = ''
 
@@ -115,24 +176,49 @@ def main(argv):
     if len(opts) >= 1:
         for opt, arg in opts:
             if opt in ('-h', '--help'):
-                print(inputStr)
+                print(helpStr)
                 sys.exit()
+            elif opt in ('-t', '--trim'):
+                trim = True
             elif opt in ('-c', '--comicFormat'):
                 comicFormat = arg
-            elif opt in ('-i', '--inDir'):
-                inDir = Path(arg)
+            elif opt in ('-i', '--inputFoD'):
+                inputFoD = Path(arg)
             elif opt in ('-o', '--outDir'):
                 outDir = Path(arg)
     else:
         print('No arguments provided')
-        print(inputStr)
+        print(helpStr)
         sys.exit()
+    
+    # Check input file or directory exists
+    if os.path.exists(inputFoD) == False:
+        print("Error: " + str(inputFoD) + " does not exist!")
+    elif len(os.listdir(inputFoD)) == 0:
+        print("Error: " + str(inputFoD) + " is empty!")
+
+    # Determine file extension
+    if os.path.isfile(inputFoD) == True:
+        inputFE = Path(inputFoD).suffix.lower()
+    elif os.path.isdir(inputFoD) == True:
+        for f in os.listdir(inputFoD):
+            inputFE = Path(f).suffix.lower()
+            break
+
+    # Determine app mode
+    if inputFE == ".pdf":
+        appMode = 'pdf'
+    elif inputFE in ('.cbz', '.cbr'):
+        appMode = 'comic'
 
     # Determine if single or batch job
-    if os.path.splitext(inDir)[1].lower() == '.pdf':
-        jobMode='single'
+    if os.path.isfile(inputFoD):
+        jobMode = 'single'
+    elif os.path.isdir(inputFoD):
+        jobMode = 'batch'
     else:
-        jobMode='batch'
+        print("Error: Dunno")
+        sys.exit()
 
     # Determine comic format or default to cbz
     if comicFormat.lower() in ('cbr', 'r'):
@@ -141,44 +227,46 @@ def main(argv):
         comicFormat = 'cbz'
     else:
         print('Invalid comic format selected!')
-        print('Valid formats: cbr, z, cbr, r')
-
-    # Check that the input directory exists and contains PDF files
-    if jobMode == 'single':
-        if inDir.exists() == False:            
-            print('Input file does not exist!')
-            sys.exit()
-    elif jobMode == 'batch':
-        if inDir.exists() == False:
-            print('Input directory does not exist!')
-            sys.exit()
-        elif sum(1 for _ in inDir.glob('*')) == 0:
-            print('Input directory is empty!')
-            sys.exit()
-        else:
-            for file in os.listdir(inDir):
-                if file.endswith('.pdf') == False and file.endswith('.PDF') == False:
-                    print('No PDF files found in input directory!')
-                    sys.exit()
+        print('Valid formats: cbz, z')
 
     # Ensure directories exist and variables are valid 
     if jobMode == 'single':
-        pdf = inDir.name
-        inDir = inDir.parent
-        outDir = inDir
-    elif jobMode == 'batch':
+        inputFile = inputFoD.name
+        inputFoD = inputFoD.parent
         if outDir == '':
-            outDir = Path(str(inDir.parent / inDir.name) + '_converted')
-        print(outDir)
+            outDir = inputFoD
         if os.path.isdir(outDir) == False:
             os.mkdir(outDir)
+    elif jobMode == 'batch':
+        if outDir == '':
+            outDir = Path(str(inputFoD.parent / inputFoD.name) + '_converted')
+        if os.path.isdir(outDir) == False:
+            os.mkdir(outDir)
+    else:
+        print('Error! Unknown job mode.')
 
-    # Start converting
-    if jobMode == 'single':
-        convertComic(comicFormat, inDir, outDir, pdf)
-    elif jobMode == 'batch' :
-        for pdf in os.listdir(inDir):
-            convertComic(comicFormat, inDir, outDir, pdf)
+    # Determine app mode
+    if appMode == 'pdf':
+
+        # Start converting
+        if jobMode == 'single':
+            convertPDF(comicFormat, inputFoD, outDir, inputFile, trim)
+        elif jobMode == 'batch' :
+            for pdfFile in os.listdir(inputFoD):
+                convertPDF(comicFormat, inputFoD, outDir, pdfFile, trim)
+
+    elif appMode == 'comic':
+
+        # Start converting
+        if jobMode == 'single':
+            convertComic(inputFoD, outDir, inputFile)
+        elif jobMode == 'batch' :
+            for comicArchive in os.listdir(inputFoD):
+                convertComic(inputFoD, outDir, comicArchive)
+    else:
+        print('Invalid app mode!')
+        print(helpStr)
+        sys.exit()
 
 if __name__ == '__main__':
    main(sys.argv[1:])
