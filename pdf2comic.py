@@ -194,8 +194,10 @@ def main(argv):
     # Check input file or directory exists
     if os.path.exists(inputFoD) == False:
         print("Error: " + str(inputFoD) + " does not exist!")
+        sys.exit()
     elif len(os.listdir(inputFoD)) == 0:
         print("Error: " + str(inputFoD) + " is empty!")
+        sys.exit()
 
     # Determine file extension
     if os.path.isfile(inputFoD) == True:
