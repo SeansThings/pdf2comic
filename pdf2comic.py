@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 import os
 from posixpath import splitext
@@ -8,6 +8,7 @@ import io
 import zipfile
 import pdf2image
 import PIL
+import rarfile 
 # import pathlib
 from pathlib import Path
 from zipfile import ZipFile
@@ -26,7 +27,7 @@ def trimBorder(im):
         return im.crop(bbox)
 
 def convertPDF(comicFormat, inputFoD, outDir, pdfFile, trim):
-    # Replaces spaces with underscores in filenames        
+    # Replaces spaces with underscores in filenames
     baseFN=os.path.splitext(pdfFile)[0]
     pageFN=baseFN.replace(' ', '_')
 
@@ -37,13 +38,13 @@ def convertPDF(comicFormat, inputFoD, outDir, pdfFile, trim):
     # Create zip file in ram
     zipIO = io.BytesIO()
     with ZipFile(zipIO, 'w') as comicZip:
-        
+
         # Create progress bar
-        with alive_bar(len(pages), title=baseFN, title_length='40', length='40', bar='blocks', spinner='dots_reverse') as bar:
+        with alive_bar(len(pages)) as bar:#, title=baseFN, title_length='40', length='40', bar='blocks', spinner='dots_reverse') as bar:
 
             # Process each page
             for i in range(len(pages)):
-                
+
                 # Check if pages are to be trimmed
                 if trim == True:
                     pages[i] = trimBorder(pages[i])
@@ -53,7 +54,7 @@ def convertPDF(comicFormat, inputFoD, outDir, pdfFile, trim):
                 pages[i].save(pageIO, 'WEBP')
                 pages[i].close()
                 pages[i] = pageIO
-                
+
                 # Add pages to archive file
                 if comicFormat == 'cbz':
                     pageName=pageFN + '_-_' + str(i).zfill(3) + '.webp'
@@ -68,7 +69,7 @@ def convertPDF(comicFormat, inputFoD, outDir, pdfFile, trim):
                 bar()
 
     # Close archive file
-    comicZip.close()            
+    comicZip.close()
 
     # Write archive to disk
     comicZipName = str(outDir / baseFN) + '.' + comicFormat
@@ -80,17 +81,25 @@ def convertComic(inputFoD, outDir, comicArchive):
 
     # Replaces spaces with underscores in filenames
     baseFN=os.path.splitext(comicArchive)[0]
+    baseFE=os.path.splitext(comicArchive)[1]
     pageFN=baseFN.replace(' ', '_')
 
-    archiveFile = zipfile.ZipFile(inputFoD / comicArchive, 'r')
-
+    # Determine comic format and extract accordingly
+    if baseFE == '.cbz':
+        archiveFile = zipfile.ZipFile(inputFoD / comicArchive, 'r')
+    elif baseFE == '.cbr':
+        archiveFile = rarfile.RarFile(inputFoD / comicArchive, 'r')
+    else:
+        print('Unable to determine comic format')
+        sys.exit()
+ 
     # Create zip file in ram
     zipIO = io.BytesIO()
     with ZipFile(zipIO, 'w') as comicZip:
-        
-        # Create progress bar
-        with alive_bar(len(archiveFile.namelist()), title=baseFN, title_length='40', length='40', bar='blocks', spinner='dots_reverse') as bar:
 
+
+        # Create progress bar
+        with alive_bar(len(archiveFile.namelist()), title=baseFN, title_length=40, length=40, bar='blocks') as bar:
             i = 1
 
             orderedNameList = archiveFile.namelist()
@@ -103,13 +112,13 @@ def convertComic(inputFoD, outDir, comicArchive):
                     pageBy = PIL.Image.open(io.BytesIO(archiveFile.read(page)))
                     pageBy.save(pageIO, 'WEBP')
                     pageBy.close()
-                    pageBy = pageIO                
+                    pageBy = pageIO
                     pageName = pageFN + '_-_' + str(i).zfill(3) + '.webp'
                     comicZip.writestr(pageName, pageBy.getvalue())
                 # Copy metadata to new archive
                 elif page == 'ComicInfo.xml':
                     pageIO = io.BytesIO()
-                    pageBy = io.BytesIO(archiveFile.read(page))                
+                    pageBy = io.BytesIO(archiveFile.read(page))
                     pageName = 'ComicInfo.xml'
                     comicZip.writestr(pageName, pageBy.getvalue())
 
@@ -118,7 +127,7 @@ def convertComic(inputFoD, outDir, comicArchive):
                 # Update progress bar
                 time.sleep(0.001)
                 bar()
-    
+
     # Close archive files
     archiveFile.close()
     comicZip.close()
@@ -135,7 +144,7 @@ def main(argv):
     pdf2comic.py
     ============
 
-    Arguments              Options           Requisite   Notes    
+    Arguments              Options           Requisite   Notes
     -h    --help                             Optional    Displays this help message.
     -t    --trim                             Optional    Trim borders on every page. Defaults to False.
     -c    --comicFormat    cbz, z            Optional    Wanted comic format. Defaults to cbz.
@@ -148,7 +157,7 @@ def main(argv):
 
     Converting PDF's to comic formats:
     Single: pdf2comic.py -c <Comic format> -i <Input file> -o <Output directory>
-            
+
             pdf2comic.py -c cbz -i /home/user/comic.pdf
             pdf2comic.py -c cbr -i /home/user/comic.pdf -o /home/user/
             pdf2comic.py -c cbr -i C:\\comics\\comic.pdf
@@ -161,6 +170,7 @@ def main(argv):
             pdf2comic.py -c cbr -i C:\\comics
             pdf2comic.py -c cbz -i C:\\comics -o C:\\comics_converted
     '''
+
     try:
         opts, args = getopt.getopt(argv,'htci:o',['help','trim=','comicFormat=','inputFoD=','outDir='])
     except getopt.GetoptError:
@@ -190,7 +200,9 @@ def main(argv):
         print('No arguments provided')
         print(helpStr)
         sys.exit()
-    
+
+#    print("1: " + str(inputFoD))
+
     # Check input file or directory exists
     if os.path.exists(inputFoD) == False:
         print("Error: " + str(inputFoD) + " does not exist!")
@@ -206,12 +218,18 @@ def main(argv):
         for f in os.listdir(inputFoD):
             inputFE = Path(f).suffix.lower()
             break
+    else:
+        print('Unable to determine file extension')
+        sys.exit()
 
     # Determine app mode
     if inputFE == ".pdf":
         appMode = 'pdf'
     elif inputFE in ('.cbz', '.cbr'):
         appMode = 'comic'
+    else:
+        print('Unable to determine app mode')
+        sys.exit()
 
     # Determine if single or batch job
     if os.path.isfile(inputFoD):
